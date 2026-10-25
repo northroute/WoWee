@@ -255,24 +255,19 @@ void CharacterPreview::createFBO() {
     VkDevice device = vkCtx_->getDevice();
     VmaAllocator allocator = vkCtx_->getAllocator();
 
-    // 1. Create off-screen render target with depth
-    // WOWEE_PREVIEW_MSAA=1|2|4|8 overrides the preview's own sample count. A
-    // diagnostic for the NVIDIA device loss at character select (#154), which
-    // needs scene MSAA on and a draw into this 4x pass: it separates "the
-    // preview's multisampling" from "the scene's".
-    static const VkSampleCountFlagBits previewSamples = [] {
-        const char* v = std::getenv("WOWEE_PREVIEW_MSAA");
-        if (!v || !*v) return VK_SAMPLE_COUNT_4_BIT;
-        switch (std::atoi(v)) {
-            case 1: return VK_SAMPLE_COUNT_1_BIT;
-            case 2: return VK_SAMPLE_COUNT_2_BIT;
-            case 8: return VK_SAMPLE_COUNT_8_BIT;
-            default: return VK_SAMPLE_COUNT_4_BIT;
-        }
-    }();
-    if (previewSamples != VK_SAMPLE_COUNT_4_BIT) {
-        LOG_WARNING("CharacterPreview: WOWEE_PREVIEW_MSAA - ", static_cast<int>(previewSamples),
-                    "x instead of 4x");
+    // 1. Create off-screen render target with depth.
+    //
+    // NVIDIA's 580.x driver loses the GPU when this preview uses the forced
+    // 4x MSAA render-pass/resolve path. The same complete preview (including
+    // all model draws) is stable with a single-sampled target. Keep MSAA for
+    // other vendors, while selecting a supported count instead of assuming
+    // that every device can create a 4x color/depth target.
+    VkSampleCountFlagBits previewSamples = VK_SAMPLE_COUNT_4_BIT;
+    if (vkCtx_->isNvidiaGpu()) {
+        previewSamples = VK_SAMPLE_COUNT_1_BIT;
+    } else {
+        const VkSampleCountFlagBits maxSamples = vkCtx_->getMaxUsableSampleCount();
+        if (maxSamples < previewSamples) previewSamples = maxSamples;
     }
     renderTarget_ = std::make_unique<VkRenderTarget>();
     if (!renderTarget_->create(*vkCtx_, fboWidth_, fboHeight_, VK_FORMAT_R8G8B8A8_UNORM, true,
